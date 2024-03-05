@@ -1,4 +1,5 @@
 
+from __future__ import annotations
 from typing import *
 import os, sys
 from getopt import gnu_getopt
@@ -9,7 +10,7 @@ import re
 from dataclasses import dataclass
 import enum
 
-class SmellKind(enum.Enum):
+class IssueKind(enum.Enum):
     BAD_NAME = enum.auto()
     BAD_COMMENT = enum.auto()
     BAD_DOCUMENTATION = enum.auto()
@@ -18,18 +19,35 @@ class SmellKind(enum.Enum):
     UNNECESSARILY_DETAILED_DEPENDENCY = enum.auto()
     MULTIPLE_RESPONSIBILITIES = enum.auto()
     BAD_SUBTYPE = enum.auto()
+    UNCHECKED_INPUT = enum.auto()
+
+class ConstructKind(enum.Enum):
+    TOP_LEVEL = enum.auto()
+    FUNCTION = enum.auto()
+    VARIABLE = enum.auto()
+    TYPE = enum.auto()
 
 @dataclass(frozen=True, eq=True)
-class SmellInstanceKey:
-    kind: SmellKind
+class IssueLocation:
+    nested: Optional[IssueLocation]
+    kind: ConstructKind
+    identifier: str
+
+    def __str__(self) -> str:
+        me = f"{self.kind.name.lower()}:{self.identifier}"
+        return f"{me}/{self.nested}" if self.nested is not None else me
+
+@dataclass(frozen=True, eq=True)
+class IssueInstanceKey:
+    kind: IssueKind
     file: str
-    line: int
+    location: IssueLocation
 
 @dataclass(frozen=True)
-class SmellInstance:
-    key: SmellInstanceKey
+class IssueInstance:
+    key: IssueInstanceKey
     severity: int
-    suggestion: Optional[str]
+    description: Optional[str]
 
 def walk(path: str):
     for entry in os.scandir(path):
@@ -41,18 +59,27 @@ def walk(path: str):
 def indent(text: str):
     return "\n".join(f"{i+1: <8}{line}" for i, line in enumerate(text.split("\n")))
 
-def parse_smell_instance(line: str) -> SmellInstance:
-    match = re.match(r"^([\w.\-\/]+)#(\d+), ([\w.\-\/]+)\/(\d+)(: .*)?$", line)
-    if not match:
-        raise ValueError
-    return SmellInstance(
-        key=SmellInstanceKey(
-            kind=SmellKind[match.group(3).upper()],
-            file=match.group(1),
-            line=int(match.group(2)),
+def parse_issue_location(part: str) -> IssueLocation:
+    slash_index = part.find("/")
+    of_interest = (part[:slash_index] if slash_index >= 0 else part).split(":")
+    assert len(of_interest) == 2
+    return IssueLocation(
+        kind=ConstructKind[of_interest[0].upper()],
+        identifier=of_interest[1],
+        nested=parse_issue_location(part[slash_index:]) if slash_index >= 0 else None
+    )
+
+def parse_issue_instance(line: str) -> IssueInstance:
+    split = line.split(",")
+    assert len(split) == 4 or len(split) == 5
+    return IssueInstance(
+        key=IssueInstanceKey(
+            kind=IssueKind[split[2].upper()],
+            file=split[0],
+            location=parse_issue_location(split[1]),
         ),
-        severity=int(match.group(4)),
-        suggestion=match.group(5)[2:]
+        severity=int(split[3]),
+        suggestion=split[4] if len(split) >= 4 else None
     )
 
 def main(argv: List[str]):
@@ -72,19 +99,19 @@ def main(argv: List[str]):
 
     print("communicating with LLM")
     result: ChatCompletion = client.chat.completions.create(messages=[
-        { "role": "system", "content": pathlib.Path(__file__).parent.joinpath("mvp.md").read_text() },
+        { "role": "system", "content": pathlib.Path(__file__).parent.joinpath("mvp2.md").read_text() },
         { "role": "user", "content": "\n".join(f"{path}:\n{indent(content)}" for path, content in contents) },
     ], model="gpt-4", n=10)
 
-    votes: Dict[SmellInstanceKey, List[SmellInstance]] = {}
+    votes: Dict[IssueInstanceKey, List[IssueInstance]] = {}
     voter_issues: List[int] = []
     for choice in result.choices:
-        smell_instances: List[SmellInstance] = []
+        smell_instances: List[IssueInstance] = []
         for line in choice.message.content.split("\n"):
-            if line.strip() == "done":
+            if line.strip() == "@done":
                 break
             try:
-                smell_instances.append(parse_smell_instance(line))
+                smell_instances.append(parse_issue_instance(line))
             except Exception as _err:
                 print(f"wrong output format: '{line}'")
                 continue
@@ -100,9 +127,10 @@ def main(argv: List[str]):
     for key in sorted(votes.keys(), key=lambda k: len(votes[k]), reverse=True):
         n_votes = len(votes[key])
         avg_severity = sum(vote.severity for vote in votes[key]) / n_votes
-        print(f"{key.file}#{key.line}, {key.kind.name.lower()} ({n_votes} votes, avg. severity {avg_severity:.2f}):")
+        print(f"{key.file}#{key.location}, {key.kind.name.lower()} ({n_votes} votes, avg. severity {avg_severity:.2f}):")
         for vote in votes[key]:
-            print(f"   {vote.suggestion}")
+            if vote.description is not None:
+                print(f"   {vote.description}")
 
 if __name__ == "__main__":
     main(sys.argv[1:])

@@ -57,7 +57,7 @@ The severity is a number from 1 to 5. 1 means that it is just a nitpick, 5 means
 
 The suggestion must be less than 20 words and contain no newline characters. If you are unsure about the suggestion, you don't have to suggest anything and use this format:
 
-[file name]#[line number], [problem name]/[severity]: [suggestion]
+[file name]#[line number], [problem name]/[severity]
 
 Notice that there is no colon after the line number. Examples:
 
