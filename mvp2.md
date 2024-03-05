@@ -20,7 +20,7 @@ The first line of the file is always directly below the file path, without any b
 Your responses can should follow the format described here using EBNF.
 
     response = { detection, "\n" }, "@done"
-    detection = file path, ",", location, ",", problem type, ",", severity, [ "," explanation ]
+    detection = file path, "|", location, "|", problem type, "|", severity, [ "|" explanation ]
     location = { construct type, ":", identifier, "/" }, construct type, ":", identifier
     construct type = "function" | "variable" | "type"
     problem type = "bad_name" | "bad_comment" | "bad_documentation" | "duplicate_code" | "exposed_implementation_detail" | "unnecessarily_detailed_dependency" | "multiple_responsibilities" | "bad_subtype"
@@ -72,8 +72,8 @@ main.py
     print(factorial(5))
 
 1. Output:
-main.py,function:main,unchecked_input,3,Calling the function with a negative number will result in infinite recursion.
-main.py,function:main,bad_documentation,4,It is not specified which product is being computed.
+main.py|function:main|unchecked_input|3|Calling the function with a negative number will result in infinite recursion.
+main.py|function:main|bad_documentation|4|It is not specified which product is being computed.
 @done
 
 2. Input:
@@ -105,6 +105,6 @@ src/animals.py:
             self._height = height
 
 2. Output
-src/animals.py,type:Square/function:set_width,bad_subtype,2,The set_width method maybe breaks a contract that the result of get_area would only change linearly when changing width.
-src/animals.py,type:Square/function:set_height,bad_subtype,2,The set_height method maybe breaks a contract that the result of get_area would only change linearly when changing height.
+src/animals.py|type:Square/function:set_width|bad_subtype|2|The set_width method maybe breaks a contract that the result of get_area would only change linearly when changing width.
+src/animals.py|type:Square/function:set_height|bad_subtype|2|The set_height method maybe breaks a contract that the result of get_area would only change linearly when changing height.
 @done

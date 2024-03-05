@@ -66,11 +66,11 @@ def parse_issue_location(part: str) -> IssueLocation:
     return IssueLocation(
         kind=ConstructKind[of_interest[0].upper()],
         identifier=of_interest[1],
-        nested=parse_issue_location(part[slash_index:]) if slash_index >= 0 else None
+        nested=parse_issue_location(part[slash_index + 1:]) if slash_index >= 0 else None
     )
 
 def parse_issue_instance(line: str) -> IssueInstance:
-    split = line.split(",")
+    split = line.split("|")
     assert len(split) == 4 or len(split) == 5
     return IssueInstance(
         key=IssueInstanceKey(
@@ -79,10 +79,12 @@ def parse_issue_instance(line: str) -> IssueInstance:
             location=parse_issue_location(split[1]),
         ),
         severity=int(split[3]),
-        suggestion=split[4] if len(split) >= 4 else None
+        description=split[4] if len(split) >= 4 else None
     )
 
 def main(argv: List[str]):
+    # parse_issue_instance("config.py|type:Config/variable:log_file|bad_name|1|Consider replacing 'log_file' with a more descriptive name.")
+    # return
     opts, args = gnu_getopt(argv, "", [])
     client = openai.Client(api_key=os.environ["OPENAI_API_KEY"])
 
