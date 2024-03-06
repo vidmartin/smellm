@@ -42,7 +42,7 @@ def main(argv: List[str]):
         log.log(" -> no files found, exiting", True)
         return
 
-    print(" -> communicating with LLM", True)
+    log.log(" -> communicating with LLM", True)
     result: ChatCompletion = client.chat.completions.create(messages=[
         { "role": "system", "content": pathlib.Path(__file__).parent.joinpath("mvp2.md").read_text() },
         { "role": "user", "content": "\n".join(f"{path}:\n{indent(content)}" for path, content in contents) },
@@ -69,19 +69,19 @@ def main(argv: List[str]):
         
         issues_by_voter.append(issue_instances)
 
-    log.log(f"\nRESULT ():", True)
+    log.log(f"\nRESULT:", True)
     log.log(f"{sum(1 for issues in issues_by_voter if len(issues) == 0)} voters were impressed (had no issues)", True)
     log.log(f"{sum(1 for issues in issues_by_voter if all(issue.severity <= 2 for issue in issues))} voters were happy (had no issues with severity greater than 2)", True)
     log.log(f"{result.usage.total_tokens} tokens used in total", True)
     log.log("notable detections:", True)
     for key in sorted(votes.keys(), key=lambda k: len(votes[k]), reverse=True):
         n_votes = len(votes[key])
-        display = n_votes > cfg.min_vote_share * cfg.n
+        display = n_votes >= cfg.min_vote_share * cfg.n
         avg_severity = sum(vote.severity for vote in votes[key]) / n_votes
-        print(f"  - {key.file} at {key.location}: {key.kind.name.lower()} ({n_votes} votes, avg. severity {avg_severity:.2f}):", display)
+        log.log(f"  - in file '{key.file}' at {key.location}: {key.kind.name.lower()} ({n_votes} votes, avg. severity {avg_severity:.2f}):", display)
         for vote in votes[key]:
             if vote.description is not None:
-                print(f"     - {vote.description}", display)
+                log.log(f"     - {vote.description}", display)
 
 if __name__ == "__main__":
     main(sys.argv[1:])
