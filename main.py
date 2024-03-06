@@ -7,47 +7,10 @@ import openai
 from openai.types.chat import ChatCompletion
 import pathlib
 import re
+import response
+import config
+import logger
 from dataclasses import dataclass
-import enum
-
-class IssueKind(enum.Enum):
-    BAD_NAME = enum.auto()
-    BAD_COMMENT = enum.auto()
-    BAD_DOCUMENTATION = enum.auto()
-    DUPLICATE_CODE = enum.auto()
-    EXPOSED_IMPLEMENTATION_DETAIL = enum.auto()
-    UNNECESSARILY_DETAILED_DEPENDENCY = enum.auto()
-    MULTIPLE_RESPONSIBILITIES = enum.auto()
-    BAD_SUBTYPE = enum.auto()
-    UNCHECKED_INPUT = enum.auto()
-
-class ConstructKind(enum.Enum):
-    TOP_LEVEL = enum.auto()
-    FUNCTION = enum.auto()
-    VARIABLE = enum.auto()
-    TYPE = enum.auto()
-
-@dataclass(frozen=True, eq=True)
-class IssueLocation:
-    nested: Optional[IssueLocation]
-    kind: ConstructKind
-    identifier: str
-
-    def __str__(self) -> str:
-        me = f"{self.kind.name.lower()}:{self.identifier}"
-        return f"{me}/{self.nested}" if self.nested is not None else me
-
-@dataclass(frozen=True, eq=True)
-class IssueInstanceKey:
-    kind: IssueKind
-    file: str
-    location: IssueLocation
-
-@dataclass(frozen=True)
-class IssueInstance:
-    key: IssueInstanceKey
-    severity: int
-    description: Optional[str]
 
 def walk(path: str):
     for entry in os.scandir(path):
@@ -57,38 +20,16 @@ def walk(path: str):
             yield from walk(entry.path)
 
 def indent(text: str):
-    return "\n".join(f"{i+1: <8}{line}" for i, line in enumerate(text.split("\n")))
-
-def parse_issue_location(part: str) -> IssueLocation:
-    slash_index = part.find("/")
-    of_interest = (part[:slash_index] if slash_index >= 0 else part).split(":")
-    assert len(of_interest) == 2
-    return IssueLocation(
-        kind=ConstructKind[of_interest[0].upper()],
-        identifier=of_interest[1],
-        nested=parse_issue_location(part[slash_index + 1:]) if slash_index >= 0 else None
-    )
-
-def parse_issue_instance(line: str) -> IssueInstance:
-    split = line.split("|")
-    assert len(split) == 4 or len(split) == 5
-    return IssueInstance(
-        key=IssueInstanceKey(
-            kind=IssueKind[split[2].upper()],
-            file=split[0],
-            location=parse_issue_location(split[1]),
-        ),
-        severity=int(split[3]),
-        description=split[4] if len(split) >= 4 else None
-    )
+    return "\n".join(f"    {line}" for i, line in enumerate(text.split("\n")))
 
 def main(argv: List[str]):
     # parse_issue_instance("config.py|type:Config/variable:log_file|bad_name|1|Consider replacing 'log_file' with a more descriptive name.")
     # return
-    opts, args = gnu_getopt(argv, "", [])
+    cfg, args = config.get_args_and_config(argv)
+    log = logger.Logger(cfg.log_file)
     client = openai.Client(api_key=os.environ["OPENAI_API_KEY"])
 
-    print("reading source codes")
+    log.log(" -> reading source codes", True)
     contents = [
         (path, path.read_text())
         for path in walk(".")
@@ -96,44 +37,49 @@ def main(argv: List[str]):
     ]
 
     if not contents:
-        print("no files found")
+        log.log(" -> no files found, exiting", True)
         return
 
-    print("communicating with LLM")
+    print(" -> communicating with LLM", True)
     result: ChatCompletion = client.chat.completions.create(messages=[
         { "role": "system", "content": pathlib.Path(__file__).parent.joinpath("mvp2.md").read_text() },
         { "role": "user", "content": "\n".join(f"{path}:\n{indent(content)}" for path, content in contents) },
-    ], model="gpt-4", n=10)
+    ], model="gpt-4", n=cfg.n)
 
-    votes: Dict[IssueInstanceKey, List[IssueInstance]] = {}
-    voter_issues: List[int] = []
+    votes: Dict[response.IssueInstanceKey, List[response.IssueInstance]] = {}
+    issues_by_voter: List[List[response.IssueInstance]] = []
     for choice in result.choices:
-        smell_instances: List[IssueInstance] = []
+        issue_instances: List[response.IssueInstance] = []
         for line in choice.message.content.split("\n"):
             if line.strip() == "@done":
                 break
             try:
-                smell_instances.append(parse_issue_instance(line))
-            except Exception as _err:
-                print(f"wrong output format: '{line}'")
+                issue_instances.append(response.parse_issue_instance(line))
+            except Exception as err:
+                log.log(f" -> wrong output format: '{line}' (see log file for details)", True)
+                log.log(str(err), False)
                 continue
         
-        for smell_instance in smell_instances:
-            if smell_instance.key not in votes:
-                votes[smell_instance.key] = []
-            votes[smell_instance.key].append(smell_instance)
+        for issue_instance in issue_instances:
+            if issue_instance.key not in votes:
+                votes[issue_instance.key] = []
+            votes[issue_instance.key].append(issue_instance)
         
-        voter_issues.append(len(smell_instances))
+        issues_by_voter.append(issue_instances)
 
-    print(f"\nRESULT ({sum(1 for n_issues in voter_issues if n_issues == 0)} voters had no issues):")
+    log.log(f"\nRESULT ():", True)
+    log.log(f"{sum(1 for issues in issues_by_voter if len(issues) == 0)} voters were impressed (had no issues)", True)
+    log.log(f"{sum(1 for issues in issues_by_voter if all(issue.severity <= 2 for issue in issues))} voters were happy (had no issues with severity greater than 2)", True)
+    log.log(f"{result.usage.total_tokens} tokens used in total", True)
+    log.log("notable detections:", True)
     for key in sorted(votes.keys(), key=lambda k: len(votes[k]), reverse=True):
         n_votes = len(votes[key])
+        display = n_votes > cfg.min_vote_share * cfg.n
         avg_severity = sum(vote.severity for vote in votes[key]) / n_votes
-        print(f"{key.file}#{key.location}, {key.kind.name.lower()} ({n_votes} votes, avg. severity {avg_severity:.2f}):")
+        print(f"  - {key.file} at {key.location}: {key.kind.name.lower()} ({n_votes} votes, avg. severity {avg_severity:.2f}):", display)
         for vote in votes[key]:
             if vote.description is not None:
-                print(f"   {vote.description}")
+                print(f"     - {vote.description}", display)
 
 if __name__ == "__main__":
     main(sys.argv[1:])
-    pass
