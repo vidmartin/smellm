@@ -26,7 +26,9 @@ def main(argv: List[str]):
     # parse_issue_instance("config.py|type:Config/variable:log_file|bad_name|1|Consider replacing 'log_file' with a more descriptive name.")
     # return
     cfg, args = config.get_args_and_config(argv)
-    log = logger.Logger(cfg.log_file)
+    log = logger.Logger(
+        cfg.log_file if cfg.log_file.is_absolute() else pathlib.Path(__file__).parent.joinpath(cfg.log_file)
+    )
     client = openai.Client(api_key=os.environ["OPENAI_API_KEY"])
 
     log.log(" -> reading source codes", True)

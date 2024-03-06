@@ -1,13 +1,14 @@
 
 from typing import *
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from getopt import gnu_getopt
+import pathlib
 
 @dataclass(eq=True, frozen=True)
 class Config:
     n: int = 5
     min_vote_share: float = 0.5
-    log_file: str = "log.txt"
+    log_file: pathlib.Path = field(default_factory=lambda: pathlib.Path("log.txt"))
 
 def get_args_and_config(argv: List[str]):
     opts, args = gnu_getopt(argv, "", ["n", "min-vote-share", "log-file"])
